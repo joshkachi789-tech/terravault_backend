@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables — NEVER commit these, they contain secrets
+.env
+.env.*
+!.env.example
+
+# Database files (SQLite — no longer used but just in case)
+*.db
+*.db-journal
+prisma/dev.db
+prisma/dev.db-journal
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test coverage
+coverage/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/

@@ -1,0 +1,81 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(auto()) @map("_id") @db.ObjectId
+  email        String    @unique
+  password     String
+  name         String?
+  wallet       String?
+  role         String    @default("USER")
+  balance      Float     @default(0)
+  terra        Int       @default(0)
+  referralCode String?   @unique
+  referredBy   String?   @db.ObjectId
+  referrer     User?     @relation("Referrals", fields: [referredBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  referrals    User[]    @relation("Referrals")
+  tickets      Ticket[]
+  deposits     Deposit[]
+  winners      Winner[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model Draw {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  status    String    @default("OPEN")
+  pool      Float     @default(0)
+  drawTime  DateTime
+  lockedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  tickets   Ticket[]
+  winners   Winner[]
+}
+
+model Ticket {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  drawId    String   @db.ObjectId
+  status    String   @default("ACTIVE")
+  user      User     @relation(fields: [userId], references: [id])
+  draw      Draw     @relation(fields: [drawId], references: [id])
+  winner    Winner?
+  createdAt DateTime @default(now())
+}
+
+model Winner {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  drawId    String   @db.ObjectId
+  ticketId  String   @unique @db.ObjectId
+  userId    String   @db.ObjectId
+  amount    Float
+  draw      Draw     @relation(fields: [drawId], references: [id])
+  ticket    Ticket   @relation(fields: [ticketId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model Deposit {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  txHash    String
+  amount    Float
+  asset     String   @default("USDT")
+  status    String   @default("PENDING")
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PriceHistory {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  price     Float
+  createdAt DateTime @default(now())
+}
