@@ -27,8 +27,8 @@ export class AuthService implements OnModuleInit {
 
   async onModuleInit() {
     try {
-      const adminEmail = 'admin@terravault.com';
-      const adminPassword = 'TerraVaultAdmin2025!';
+      const adminEmail = process.env.ADMIN_EMAIL || 'admin@terravault.com';
+      const adminPassword = process.env.ADMIN_PASSWORD || 'TerraVaultAdmin2025!';
       const existingAdmin = await this.prisma.user.findUnique({
         where: { email: adminEmail },
       });

@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Headers,
+  Query,
   UnauthorizedException,
   InternalServerErrorException,
   Logger,
@@ -15,27 +16,24 @@ export class CronController {
 
   constructor(private readonly cronService: CronService) {}
 
-  /**
-   * POST /cron/process-draw
-   *
-   * Called by an external cron service (e.g. cron-job.org) every minute.
-   * Protected by a Bearer token matching CRON_SECRET in .env.
-   *
-   * Idempotent: safe to call multiple times — the same draw will
-   * never be processed twice thanks to the database-level lock.
-   */
   @Post('process-draw')
   @HttpCode(200)
-  async processDraw(@Headers('authorization') authHeader: string) {
-    // ── Auth check ─────────────────────────────────────────────────────────
+  async processDraw(
+    @Headers('authorization') authHeader: string,
+    @Query('secret') querySecret: string,
+  ) {
     const secret = process.env.CRON_SECRET;
     if (!secret) {
-      this.logger.error('CRON_SECRET env var is not set on this server!');
+      this.logger.error('CRON_SECRET env var is not set!');
       throw new UnauthorizedException('Server misconfiguration.');
     }
-    const expected = `Bearer ${secret}`;
-    if (!authHeader || authHeader !== expected) {
-      this.logger.warn(`Auth failed. Received: "${authHeader}" Expected: "Bearer ***"`);
+
+    // Accept secret via Authorization header OR ?secret= query param
+    const headerMatch = authHeader === `Bearer ${secret}`;
+    const queryMatch = querySecret === secret;
+
+    if (!headerMatch && !queryMatch) {
+      this.logger.warn(`Auth failed. Header: "${authHeader}" Query: "${querySecret}"`);
       throw new UnauthorizedException('Invalid or missing cron secret.');
     }
 
