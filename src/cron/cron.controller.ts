@@ -28,8 +28,14 @@ export class CronController {
   @HttpCode(200)
   async processDraw(@Headers('authorization') authHeader: string) {
     // ── Auth check ─────────────────────────────────────────────────────────
-    const expected = `Bearer ${process.env.CRON_SECRET}`;
+    const secret = process.env.CRON_SECRET;
+    if (!secret) {
+      this.logger.error('CRON_SECRET env var is not set on this server!');
+      throw new UnauthorizedException('Server misconfiguration.');
+    }
+    const expected = `Bearer ${secret}`;
     if (!authHeader || authHeader !== expected) {
+      this.logger.warn(`Auth failed. Received: "${authHeader}" Expected: "Bearer ***"`);
       throw new UnauthorizedException('Invalid or missing cron secret.');
     }
 
