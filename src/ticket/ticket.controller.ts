@@ -6,13 +6,18 @@ export class TicketController {
   constructor(private ticketService: TicketService) {}
 
   @Post()
-  async purchase(@Body() body: { userId?: string }) {
+  async purchase(@Body() body: { userId?: string; quantity?: number }) {
+    const qty = Math.min(Math.max(Math.floor(body.quantity || 1), 1), 50); // 1–50 tickets max
     try {
-      return await this.ticketService.purchaseTicket(body.userId || 'test-user');
-    } catch (err: any) {
-      if (err?.message === 'WALLET_NOT_SET') {
-        throw new BadRequestException('WALLET_NOT_SET');
+      const results = [];
+      for (let i = 0; i < qty; i++) {
+        const ticket = await this.ticketService.purchaseTicket(body.userId || '');
+        results.push(ticket);
       }
+      return { tickets: results, count: results.length };
+    } catch (err: any) {
+      if (err?.message === 'WALLET_NOT_SET') throw new BadRequestException('WALLET_NOT_SET');
+      if (err?.message === 'INSUFFICIENT_BALANCE') throw new BadRequestException('INSUFFICIENT_BALANCE');
       throw err;
     }
   }

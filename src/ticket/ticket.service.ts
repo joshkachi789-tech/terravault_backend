@@ -63,6 +63,10 @@ export class TicketService {
       throw new Error('WALLET_NOT_SET');
     }
 
+    if (user.balance < TICKET_PRICE) {
+      throw new Error('INSUFFICIENT_BALANCE');
+    }
+
     const ticket = await this.prisma.ticket.create({
       data: {
         userId: user.id,
