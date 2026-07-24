@@ -38,6 +38,27 @@ export class UserController {
     return this.userService.getAllWinners();
   }
 
+  @Get('admin/withdrawals')
+  async getAllWithdrawals() {
+    return this.userService.getAllWithdrawals();
+  }
+
+  @Patch('admin/withdrawals/:id/approve')
+  async approveWithdrawal(
+    @Param('id') id: string,
+    @Body() body: { txHash?: string },
+  ) {
+    return this.userService.approveWithdrawal(id, body.txHash);
+  }
+
+  @Patch('admin/withdrawals/:id/reject')
+  async rejectWithdrawal(
+    @Param('id') id: string,
+    @Body() body: { note?: string },
+  ) {
+    return this.userService.rejectWithdrawal(id, body.note);
+  }
+
   @Patch('admin/deposits/:id/approve')
   async approveDeposit(@Param('id') id: string) {
     return this.userService.approveDeposit(id);
@@ -94,5 +115,18 @@ export class UserController {
     @Body() body: { txHash: string; amount: number; asset?: string },
   ) {
     return this.userService.submitDeposit(userId, body.txHash, body.amount, body.asset);
+  }
+
+  @Post(':id/withdrawals')
+  async requestWithdrawal(
+    @Param('id') userId: string,
+    @Body() body: { amount: number; asset?: string },
+  ) {
+    return this.userService.requestWithdrawal(userId, body.amount, body.asset || 'USDT');
+  }
+
+  @Get(':id/withdrawals')
+  async getUserWithdrawals(@Param('id') userId: string) {
+    return this.userService.getUserWithdrawals(userId);
   }
 }

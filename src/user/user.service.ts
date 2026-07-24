@@ -161,6 +161,76 @@ export class UserService {
     });
   }
 
+  async requestWithdrawal(userId: string, amount: number, asset: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new Error('User not found');
+    if (!user.wallet) throw new Error('WALLET_NOT_SET');
+    if (user.balance < amount) throw new Error('INSUFFICIENT_BALANCE');
+    if (amount <= 0) throw new Error('INVALID_AMOUNT');
+
+    const validAssets = ['USDT', 'BNB'];
+    const normalizedAsset = validAssets.includes(asset?.toUpperCase())
+      ? asset.toUpperCase() : 'USDT';
+
+    // Deduct balance immediately and hold pending
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { balance: { decrement: amount } },
+    });
+
+    return this.prisma.withdrawal.create({
+      data: {
+        userId,
+        amount,
+        walletAddress: user.wallet,
+        asset: normalizedAsset,
+        status: 'PENDING',
+      },
+    });
+  }
+
+  async getUserWithdrawals(userId: string) {
+    return this.prisma.withdrawal.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getAllWithdrawals() {
+    return this.prisma.withdrawal.findMany({
+      include: { user: { select: { email: true, name: true, wallet: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async approveWithdrawal(withdrawalId: string, txHash?: string) {
+    const withdrawal = await this.prisma.withdrawal.findUnique({ where: { id: withdrawalId } });
+    if (!withdrawal) throw new Error('Withdrawal not found');
+    if (withdrawal.status !== 'PENDING') throw new Error('Already processed');
+
+    return this.prisma.withdrawal.update({
+      where: { id: withdrawalId },
+      data: { status: 'APPROVED', txHash: txHash || null },
+    });
+  }
+
+  async rejectWithdrawal(withdrawalId: string, note?: string) {
+    const withdrawal = await this.prisma.withdrawal.findUnique({ where: { id: withdrawalId } });
+    if (!withdrawal) throw new Error('Withdrawal not found');
+    if (withdrawal.status !== 'PENDING') throw new Error('Already processed');
+
+    // Refund the balance back to the user
+    await this.prisma.user.update({
+      where: { id: withdrawal.userId },
+      data: { balance: { increment: withdrawal.amount } },
+    });
+
+    return this.prisma.withdrawal.update({
+      where: { id: withdrawalId },
+      data: { status: 'REJECTED', note: note || null },
+    });
+  }
+
   async getUserDeposits(userId: string) {
     return this.prisma.deposit.findMany({
       where: { userId },

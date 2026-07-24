@@ -22,6 +22,7 @@ model User {
   referrals    User[]    @relation("Referrals")
   tickets      Ticket[]
   deposits     Deposit[]
+  withdrawals  Withdrawal[]
   winners      Winner[]
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -72,6 +73,20 @@ model Deposit {
   user      User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Withdrawal {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId        String   @db.ObjectId
+  amount        Float
+  walletAddress String
+  asset         String   @default("USDT")
+  status        String   @default("PENDING")
+  txHash        String?
+  note          String?
+  user          User     @relation(fields: [userId], references: [id])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 model PriceHistory {
