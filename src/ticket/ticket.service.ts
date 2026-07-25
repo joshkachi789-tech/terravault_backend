@@ -67,14 +67,14 @@ export class TicketService {
 
     // ── Single transaction: create all tickets + update user in one shot ──
     const tickets = await this.prisma.$transaction(async (tx) => {
-      // Create all tickets at once
-      const created = await Promise.all(
-        Array.from({ length: quantity }, () =>
-          tx.ticket.create({
-            data: { userId: user.id, drawId: openDraw.id },
-          }),
-        ),
-      );
+      // Create tickets sequentially (MongoDB transactions don't support Promise.all)
+      const created = [];
+      for (let i = 0; i < quantity; i++) {
+        const t = await tx.ticket.create({
+          data: { userId: user.id, drawId: openDraw.id },
+        });
+        created.push(t);
+      }
 
       // Deduct balance and award TERRA in one update
       await tx.user.update({
@@ -94,7 +94,7 @@ export class TicketService {
       }
 
       return created;
-    });
+    }, { timeout: 30000 }); // 30s timeout for large bulk purchases
 
     // Update draw pool once
     await this.drawService.updateDrawPool(openDraw.id, totalPoolContribution);
