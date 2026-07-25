@@ -50,59 +50,77 @@ export class TicketService {
     return newMarketCap;
   }
 
-  async purchaseTicket(userId: string) {
+  async purchaseBulkTickets(userId: string, quantity: number) {
     const openDraw = await this.drawService.getOpenDraw();
     if (!openDraw) throw new Error('No open draw');
 
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) {
-      throw new Error('User not found');
-    }
+    if (!user) throw new Error('User not found');
+    if (!user.wallet) throw new Error('WALLET_NOT_SET');
 
-    if (!user.wallet) {
-      throw new Error('WALLET_NOT_SET');
-    }
+    const totalCost = TICKET_PRICE * quantity;
+    if (user.balance < totalCost) throw new Error('INSUFFICIENT_BALANCE');
 
-    if (user.balance < TICKET_PRICE) {
-      throw new Error('INSUFFICIENT_BALANCE');
-    }
+    const totalPoolContribution = POOL_CONTRIBUTION * quantity;
+    const totalTerra = TERRA_PER_TICKET * quantity;
+    const totalMarketCapIncrease = MARKET_CAP_CONTRIBUTION * quantity;
 
-    const ticket = await this.prisma.ticket.create({
-      data: {
-        userId: user.id,
-        drawId: openDraw.id,
-      },
-      include: { user: true, draw: true },
-    });
+    // ── Single transaction: create all tickets + update user in one shot ──
+    const tickets = await this.prisma.$transaction(async (tx) => {
+      // Create all tickets at once
+      const created = await Promise.all(
+        Array.from({ length: quantity }, () =>
+          tx.ticket.create({
+            data: { userId: user.id, drawId: openDraw.id },
+          }),
+        ),
+      );
 
-    // Deduct ticket price from user balance and award TERRA
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: {
-        balance: { decrement: TICKET_PRICE },
-        terra: { increment: TERRA_PER_TICKET },
-      },
-    });
-
-    // Referral reward: award 5 $TERRA to referrer on every ticket the referred user buys
-    if (user.referredBy) {
-      await this.prisma.user.update({
-        where: { id: user.referredBy },
-        data: { terra: { increment: REFERRAL_TERRA_REWARD } },
+      // Deduct balance and award TERRA in one update
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          balance: { decrement: totalCost },
+          terra: { increment: totalTerra },
+        },
       });
+
+      // Referral reward (one update for all tickets combined)
+      if (user.referredBy) {
+        await tx.user.update({
+          where: { id: user.referredBy },
+          data: { terra: { increment: REFERRAL_TERRA_REWARD * quantity } },
+        });
+      }
+
+      return created;
+    });
+
+    // Update draw pool once
+    await this.drawService.updateDrawPool(openDraw.id, totalPoolContribution);
+
+    // Update market cap once with combined contribution
+    const currentMarketCap = await this.getCurrentMarketCap();
+    const newMarketCap = currentMarketCap + totalMarketCapIncrease;
+    const newPrice = newMarketCap / TOTAL_SUPPLY;
+    const priceEntry = await this.prisma.priceHistory.create({
+      data: { price: newPrice },
+    });
+    this.events.emit({ type: 'price_updated', data: { marketCap: newMarketCap, priceEntry } });
+
+    // Referral event
+    if (user.referredBy) {
       this.events.emit({
         type: 'referral_reward',
-        data: { referrerId: user.referredBy, referredUserId: user.id, terra: REFERRAL_TERRA_REWARD },
+        data: { referrerId: user.referredBy, referredUserId: user.id, terra: REFERRAL_TERRA_REWARD * quantity },
       });
     }
 
-    // Update draw pool
-    await this.drawService.updateDrawPool(openDraw.id, POOL_CONTRIBUTION);
+    return tickets;
+  }
 
-    // Update TERRA market cap
-    await this.updateMarketCap();
-
-    return ticket;
+  async purchaseTicket(userId: string) {
+    return (await this.purchaseBulkTickets(userId, 1))[0];
   }
 
   async getTicketsByDraw(drawId: string) {
