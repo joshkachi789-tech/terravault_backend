@@ -8,6 +8,8 @@ const DRAW_DURATION_MS = 48 * 60 * 60 * 1000; // 48 hours
 @Injectable()
 export class CronService {
   private readonly logger = new Logger(CronService.name);
+  // In-memory lock to prevent concurrent processing on same instance
+  private processing = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -15,7 +17,12 @@ export class CronService {
   ) {}
 
   async processDraw(): Promise<{ status: string; message: string; drawId?: string }> {
-    // ── 1. Find the current OPEN draw (no includes — just IDs and fields) ───
+    // ── 1. In-memory guard (prevents same instance running twice) ────────────
+    if (this.processing) {
+      return { status: 'already_processing', message: 'Already running on this instance.' };
+    }
+
+    // ── 2. Find OPEN draw ────────────────────────────────────────────────────
     const draw = await this.prisma.draw.findFirst({
       where: { status: 'OPEN' },
     });
@@ -26,7 +33,7 @@ export class CronService {
       return { status: 'no_draw', message: 'No open draw found. New draw created.' };
     }
 
-    // ── 2. Check if draw time has passed ─────────────────────────────────────
+    // ── 3. Check if draw time has passed ─────────────────────────────────────
     const now = new Date();
     if (now < new Date(draw.drawTime)) {
       return {
@@ -36,36 +43,39 @@ export class CronService {
       };
     }
 
-    // ── 3. Idempotency lock ───────────────────────────────────────────────────
+    // ── 4. Set in-memory lock + mark draw as PROCESSING atomically ────────────
+    this.processing = true;
+
+    // Use status='PROCESSING' as the DB-level lock (avoids MongoDB null-filter issues)
     const locked = await this.prisma.draw.updateMany({
-      where: { id: draw.id, status: 'OPEN', lockedAt: null },
-      data: { lockedAt: now },
+      where: { id: draw.id, status: 'OPEN' },
+      data: { status: 'PROCESSING', lockedAt: now },
     });
 
     if (locked.count === 0) {
+      this.processing = false;
       return {
         status: 'already_processing',
-        message: 'Draw is already being processed or completed.',
+        message: 'Draw is already being processed by another request.',
         drawId: draw.id,
       };
     }
 
-    // ── 4. Fetch only ticket IDs (no user data) ───────────────────────────────
-    const tickets = await this.prisma.ticket.findMany({
-      where: { drawId: draw.id },
-      select: { id: true, userId: true },
-    });
-
-    this.logger.log(`Processing draw ${draw.id} with ${tickets.length} tickets.`);
+    this.logger.log(`Processing draw ${draw.id}.`);
 
     try {
-      // ── 5. Select winners ─────────────────────────────────────────────────
+      // ── 5. Fetch ticket IDs ──────────────────────────────────────────────
+      const tickets = await this.prisma.ticket.findMany({
+        where: { drawId: draw.id },
+        select: { id: true, userId: true },
+      });
+
+      // ── 6. Select winners ────────────────────────────────────────────────
       const shuffled = [...tickets].sort(() => Math.random() - 0.5);
       const winningTickets = shuffled.slice(0, Math.min(WINNERS_PER_DRAW, shuffled.length));
-      const prizePerWinner =
-        winningTickets.length > 0 ? draw.pool / winningTickets.length : 0;
+      const prizePerWinner = winningTickets.length > 0 ? draw.pool / winningTickets.length : 0;
 
-      // ── 6. Save winners & update balances in a transaction ────────────────
+      // ── 7. Save winners & update balances ────────────────────────────────
       await this.prisma.$transaction(async (tx) => {
         for (const ticket of winningTickets) {
           await tx.winner.create({
@@ -81,18 +91,18 @@ export class CronService {
             data: { balance: { increment: prizePerWinner } },
           });
         }
-      });
+      }, { timeout: 30000 });
 
-      // ── 7. Mark draw COMPLETED ────────────────────────────────────────────
+      // ── 8. Mark COMPLETED ─────────────────────────────────────────────────
       await this.prisma.draw.update({
         where: { id: draw.id },
         data: { status: 'COMPLETED' },
       });
 
-      // ── 8. Create new OPEN draw ───────────────────────────────────────────
+      // ── 9. Create new draw ────────────────────────────────────────────────
       const newDraw = await this.createNextDraw();
 
-      // ── 9. Emit minimal SSE events (no bulk user/ticket data) ─────────────
+      // ── 10. Emit SSE events ───────────────────────────────────────────────
       this.events.emit({
         type: 'draw_executed',
         data: { drawId: draw.id, winnersCount: winningTickets.length, pool: draw.pool },
@@ -103,23 +113,24 @@ export class CronService {
       });
 
       this.logger.log(
-        `Draw ${draw.id} completed. ${winningTickets.length} winners. New draw: ${newDraw.id}`,
+        `Draw ${draw.id} completed. ${winningTickets.length} winner(s). New draw: ${newDraw.id}`,
       );
 
-      // ── 10. Return minimal response ───────────────────────────────────────
       return {
         status: 'completed',
         message: `Draw processed. ${winningTickets.length} winner(s). New draw created.`,
         drawId: draw.id,
       };
     } catch (err) {
-      // Release lock on failure so next cron call can retry
+      // ── On failure: revert status back to OPEN so it can be retried ──────
       this.logger.error(`Draw processing failed for ${draw.id}:`, err);
       await this.prisma.draw.update({
         where: { id: draw.id },
-        data: { lockedAt: null },
+        data: { status: 'OPEN', lockedAt: null },
       });
       throw err;
+    } finally {
+      this.processing = false;
     }
   }
 
